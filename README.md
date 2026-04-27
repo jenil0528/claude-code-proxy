@@ -110,12 +110,12 @@ blitz                # Start proxy + launch Claude Code
 You can save multiple API keys and switch between them instantly.
 
 ```powershell
-blitz add <key> [name]    # Add a new API key (provider auto-detected)
-blitz keys                # List all saved keys
-blitz switch <n>          # Switch to key #n
-blitz switch <name>       # Switch by name (partial match works)
-blitz rm <n>              # Delete key #n
-blitz rm <name>           # Delete by name
+blitz add API_KEY [NAME]   # Add a new API key (provider auto-detected)
+blitz keys                 # List all saved keys
+blitz switch INDEX         # Switch to key by number (#)
+blitz switch NAME          # Switch to key by name (partial match works)
+blitz rm INDEX             # Delete key by number
+blitz rm NAME              # Delete by name
 ```
 
 **Example workflow:**
@@ -150,9 +150,9 @@ blitz rm 3
 ### Changing Model
 
 ```powershell
-blitz model               # List available models for current provider
-blitz model <name>        # Set a specific model
-blitz model <number>      # Set by number from the list
+blitz model                # List available models for current provider
+blitz model NAME           # Set a specific model
+blitz model INDEX          # Set by number from the list
 ```
 
 **Example:**
@@ -177,8 +177,8 @@ blitz model deepseek-r1
 ### Changing Provider
 
 ```powershell
-blitz provider            # List all providers with timeouts
-blitz provider <name>     # Switch to a provider
+blitz provider             # List all providers with timeouts
+blitz provider NAME        # Switch to a provider
 ```
 
 **Example:**
@@ -320,6 +320,12 @@ echo $env:ANTHROPIC_API_KEY
 # If not, run setup again
 .\setup.bat
 ```
+
+### PowerShell error: "The '<' operator is reserved for future use"
+If you see this error, it's because you included brackets like `<` and `>` in your command. **Do not include the brackets.**
+- ❌ `blitz add <nvapi-abc123>`
+- ✅ `blitz add nvapi-abc123`
+- ✅ `blitz add "nvapi-abc123"` (use quotes if the key has special characters)
 
 ---
 
