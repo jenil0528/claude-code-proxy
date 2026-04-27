@@ -66,14 +66,20 @@ blitz add YOUR_API_KEY_HERE
 That's it! BlitzProxy **auto-detects** the provider from your key prefix. Examples:
 
 ```powershell
-# NVIDIA NIM key (starts with nvapi-)
+# NVIDIA NIM key (starts with nvapi-) → auto-detected
 blitz add nvapi-abc123def456
 
-# Groq key (starts with gsk_)
+# Groq key (starts with gsk_) → auto-detected
 blitz add gsk_xyz789abc
 
-# DeepSeek key (starts with sk-)
-blitz add sk-mydeepseekkey123
+# sk- keys (DeepSeek & OpenAI both use this prefix)
+# BlitzProxy will ask you to choose:
+blitz add sk-mykey123
+# ⚠ This key starts with "sk-", which is used by multiple providers.
+# Which provider is this key for?
+#   🔮 1) DeepSeek
+#   🤖 2) OpenAI
+# Enter choice (1-2): _
 
 # You can also give it a name
 blitz add nvapi-abc123def456 "My NVIDIA Free Tier"
@@ -182,6 +188,7 @@ blitz provider
 # ● 🟢 NVIDIA NIM       timeout=300s  Free credits on signup
 #   ⚡ Groq             timeout=30s   Ultra-fast inference
 #   🔮 DeepSeek         timeout=120s  Extremely affordable
+#   🤖 OpenAI           timeout=120s  OpenAI official API
 #   🦙 Ollama (Local)   timeout=600s  Run models locally
 #   ...
 
@@ -210,6 +217,7 @@ BlitzProxy automatically sets the right timeout for each provider — you never 
 | GitHub Models | 60s | Generally fast |
 | OpenRouter | 120s | Varies by model |
 | DeepSeek | 120s | Standard |
+| OpenAI | 120s | Standard |
 | Together AI | 120s | Standard |
 | Hugging Face | 120s | Standard |
 | NVIDIA NIM | 300s | Cold-start on serverless GPUs |
@@ -254,7 +262,8 @@ BlitzProxy auto-detects the provider from your API key prefix:
 | Cerebras | `csk-` | ✅ Yes |
 | GitHub Models | `github_pat_` | ✅ Yes |
 | Hugging Face | `hf_` | ✅ Yes |
-| DeepSeek | `sk-` | ✅ Yes |
+| DeepSeek | `sk-` | ⚡ Prompts (shared with OpenAI) |
+| OpenAI | `sk-` | ⚡ Prompts (shared with DeepSeek) |
 | Together AI | *(generic)* | Set manually: `blitz provider together` |
 | Ollama | *(no key)* | Set manually: `blitz provider ollama` |
 | Custom | *(any)* | Set manually: `blitz provider custom` |
