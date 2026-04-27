@@ -1,5 +1,6 @@
 // ============================================================================
 // BlitzProxy — Configuration Manager
+// Author: Jenil <jenil8736@gmail.com>
 // Handles loading, saving, and runtime config updates
 // Auto-detects provider from API key prefix for zero-config setup
 // Multi-API-key management: add, switch, delete keys on the fly

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // ============================================================================
 // BlitzProxy — CLI Tool
+// Author: Jenil <jenil8736@gmail.com>
 // All management from terminal: add, keys, switch, rm, model, provider, test
 // ============================================================================
 

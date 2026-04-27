@@ -10,7 +10,7 @@
     "test": "node test.js"
   },
   "keywords": ["claude", "proxy", "openai", "nvidia", "groq", "ollama", "huggingface"],
-  "author": "BlitzProxy",
+  "author": "Jenil <jenil8736@gmail.com>",
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"

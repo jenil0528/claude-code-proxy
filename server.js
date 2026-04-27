@@ -1,5 +1,6 @@
 // ============================================================================
 // BlitzProxy — Main Server (Proxy Only)
+// Author: Jenil <jenil8736@gmail.com>
 // Universal Claude Code Proxy — zero UI, all terminal
 // ============================================================================
 

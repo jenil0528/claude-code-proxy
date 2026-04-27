@@ -334,3 +334,11 @@ blitz add YOUR_API_KEY
 # Every time
 blitz
 ```
+
+---
+
+## 👤 Author & Support
+
+Created by **Jenil**  
+📧 Email: [jenil8736@gmail.com](mailto:jenil8736@gmail.com)  
+🚀 Part of the **BlitzProxy** project.

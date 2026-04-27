@@ -1,5 +1,6 @@
 // ============================================================================
 // BlitzProxy — Provider Definitions
+// Author: Jenil <jenil8736@gmail.com>
 // All supported OpenAI-compatible API providers
 // ============================================================================
 
