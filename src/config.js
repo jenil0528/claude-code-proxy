@@ -101,9 +101,17 @@ export function loadConfig() {
   if (currentConfig.apiKey && !currentConfig.provider) {
     const detected = detectProviderFromKey(currentConfig.apiKey);
     if (detected) {
-      currentConfig.provider = detected.provider;
-      currentConfig.autoDetected = true;
-      console.log(`[Config] ✨ Auto-detected provider: ${detected.name} (from key prefix)`);
+      if (detected.confidence === 'ambiguous') {
+        // Ambiguous prefix on startup — default to first candidate
+        const fallback = detected.candidates[0];
+        currentConfig.provider = fallback.provider;
+        currentConfig.autoDetected = true;
+        console.warn(`[Config] ⚠ Ambiguous key prefix "sk-" — defaulting to ${fallback.name}. Run: blitz provider <name> to change.`);
+      } else {
+        currentConfig.provider = detected.provider;
+        currentConfig.autoDetected = true;
+        console.log(`[Config] ✨ Auto-detected provider: ${detected.name} (from key prefix)`);
+      }
     } else {
       // Unknown key format — default to custom
       console.warn('[Config] ⚠ Unknown API key format. Set PROVIDER in .env or use the dashboard.');
@@ -143,8 +151,14 @@ export function saveConfig(updates = {}) {
   if (updates.apiKey && !updates.provider) {
     const detected = detectProviderFromKey(updates.apiKey);
     if (detected) {
-      updates.provider = detected.provider;
-      updates.autoDetected = true;
+      if (detected.confidence === 'ambiguous') {
+        // Ambiguous — default to first candidate in batch/config mode
+        updates.provider = detected.candidates[0].provider;
+        updates.autoDetected = true;
+      } else {
+        updates.provider = detected.provider;
+        updates.autoDetected = true;
+      }
     }
   }
 
@@ -253,6 +267,13 @@ export function addApiKey({ name, key, provider, model }) {
   if (!resolvedProvider) {
     const detected = detectProviderFromKey(key);
     if (detected) {
+      // Ambiguous prefix (e.g. sk-) — caller must resolve before saving
+      if (detected.confidence === 'ambiguous') {
+        const err = new Error('AMBIGUOUS_PROVIDER');
+        err.code = 'AMBIGUOUS_PROVIDER';
+        err.candidates = detected.candidates;
+        throw err;
+      }
       resolvedProvider = detected.provider;
       providerName = detected.name;
     } else {

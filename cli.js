@@ -16,7 +16,7 @@ const C = {
 
 const PROVIDER_ICONS_CLI = {
   nvidia: '🟢', groq: '⚡', openrouter: '🔀', together: '🤝',
-  deepseek: '🔮', github: '🐙', cerebras: '🧠', ollama: '🦙',
+  deepseek: '🔮', openai: '🤖', github: '🐙', cerebras: '🧠', ollama: '🦙',
   huggingface: '🤗', custom: '🔧',
 };
 
@@ -46,7 +46,7 @@ switch (cmd) {
 
 // ─── Add Key ─────────────────────────────────────────────────────────────────
 
-function cmdAdd(args) {
+async function cmdAdd(args) {
   const key = args[0];
   const name = args.slice(1).join(' ');
 
@@ -62,9 +62,63 @@ function cmdAdd(args) {
     console.log(`${C.grn}⚡ Added & activated: ${C.b}${entry.name}${C.r}`);
     console.log(`${C.d}   Provider: ${entry.providerName}  •  Timeout: ${provider.timeout / 1000}s${C.r}`);
   } catch (err) {
+    // ─── Handle ambiguous sk- prefix ─────────────────────────────────────
+    if (err.code === 'AMBIGUOUS_PROVIDER') {
+      const chosen = await resolveAmbiguousProvider(err.candidates);
+      try {
+        const entry = addApiKey({ key, name: name || undefined, provider: chosen.provider });
+        const provDef = getProvider(entry.provider);
+        console.log(`${C.grn}⚡ Added & activated: ${C.b}${entry.name}${C.r}`);
+        console.log(`${C.d}   Provider: ${entry.providerName}  •  Timeout: ${provDef.timeout / 1000}s${C.r}`);
+      } catch (e2) {
+        console.error(`${C.red}✕ ${e2.message}${C.r}`);
+        process.exit(1);
+      }
+      return;
+    }
     console.error(`${C.red}✕ ${err.message}${C.r}`);
     process.exit(1);
   }
+}
+
+/**
+ * Prompt user to pick a provider when the key prefix is ambiguous (e.g. sk-).
+ * In non-interactive mode (piped stdin), defaults to the first candidate with a warning.
+ */
+async function resolveAmbiguousProvider(candidates) {
+  // Non-interactive: piped stdin → default to first candidate
+  if (!process.stdin.isTTY) {
+    const fallback = candidates[0];
+    console.log(`${C.yel}⚠ Ambiguous key prefix "sk-" — defaulting to ${fallback.name} (non-interactive mode)${C.r}`);
+    console.log(`${C.d}  To specify provider: blitz provider <name>${C.r}`);
+    return fallback;
+  }
+
+  // Interactive: show numbered menu
+  console.log(`\n${C.yel}⚠ This key starts with "sk-", which is used by multiple providers.${C.r}`);
+  console.log(`${C.b}Which provider is this key for?${C.r}\n`);
+  candidates.forEach((c, i) => {
+    const icon = PROVIDER_ICONS_CLI[c.provider] || '  ';
+    console.log(`  ${icon} ${i + 1}) ${c.name}`);
+  });
+  console.log();
+
+  const { createInterface } = await import('readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  return new Promise((resolve) => {
+    rl.question(`${C.blu}Enter choice (1-${candidates.length}): ${C.r}`, (answer) => {
+      rl.close();
+      const idx = parseInt(answer.trim(), 10) - 1;
+      if (idx >= 0 && idx < candidates.length) {
+        resolve(candidates[idx]);
+      } else {
+        // Invalid input → default to first
+        console.log(`${C.yel}⚠ Invalid choice — defaulting to ${candidates[0].name}${C.r}`);
+        resolve(candidates[0]);
+      }
+    });
+  });
 }
 
 // ─── List Keys ───────────────────────────────────────────────────────────────

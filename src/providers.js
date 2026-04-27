@@ -109,6 +109,26 @@ export const PROVIDERS = {
     description: 'Extremely affordable, strong coding model',
   },
 
+  openai: {
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o',
+    models: [
+      'gpt-4o',
+      'gpt-4o-mini',
+      'gpt-4-turbo',
+      'gpt-4',
+      'gpt-3.5-turbo',
+      'o1-preview',
+      'o1-mini',
+    ],
+    headers: {},
+    requiresKey: true,
+    keyPrefix: 'sk-',
+    timeout: 120000,
+    description: 'OpenAI official API',
+  },
+
   github: {
     name: 'GitHub Models',
     baseUrl: 'https://models.inference.ai.azure.com',
@@ -236,8 +256,14 @@ const KEY_PATTERNS = [
   { prefix: 'github_pat_',  provider: 'github',      name: 'GitHub Models' },
   { prefix: 'hf_',          provider: 'huggingface', name: 'Hugging Face' },
   { prefix: 'csk-',         provider: 'cerebras',    name: 'Cerebras' },
-  { prefix: 'sk-',          provider: 'deepseek',    name: 'DeepSeek' },
   { prefix: 'together_',    provider: 'together',    name: 'Together AI' },
+  // sk- is intentionally LAST and handled specially — both DeepSeek and OpenAI use it
+];
+
+// Providers that share the ambiguous sk- prefix
+const SK_AMBIGUOUS_PROVIDERS = [
+  { provider: 'deepseek', name: 'DeepSeek' },
+  { provider: 'openai',   name: 'OpenAI' },
 ];
 
 export function detectProviderFromKey(apiKey) {
@@ -245,13 +271,24 @@ export function detectProviderFromKey(apiKey) {
     return { provider: 'ollama', name: 'Ollama (Local)', confidence: 'exact' };
   }
 
+  // Check unambiguous prefixes first (longest-prefix-first order)
   for (const pattern of KEY_PATTERNS) {
     if (apiKey.startsWith(pattern.prefix)) {
       return { provider: pattern.provider, name: pattern.name, confidence: 'prefix' };
     }
   }
 
-  // No known prefix — could be Together AI, DeepSeek, or other provider with generic keys
+  // Check for ambiguous sk- prefix
+  if (apiKey.startsWith('sk-')) {
+    return {
+      provider: null,
+      name: null,
+      confidence: 'ambiguous',
+      candidates: SK_AMBIGUOUS_PROVIDERS,
+    };
+  }
+
+  // No known prefix — could be Together AI or other provider with generic keys
   return null;
 }
 
