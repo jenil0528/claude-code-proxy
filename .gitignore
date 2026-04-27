@@ -1,0 +1,17 @@
+# Secrets — never commit these
+.env
+config.json
+
+# Node
+node_modules/
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
