@@ -393,6 +393,6 @@ blitz
 
 ## 👤 Author & Support
 
-Created by **Jenil**  
+Created by **Jenil patel**  
 📧 Email: [jenil8736@gmail.com](mailto:jenil8736@gmail.com)  
 🚀 Part of the **BlitzProxy** project.
