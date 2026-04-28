@@ -5,12 +5,48 @@
 // ============================================================================
 
 import { createServer } from 'http';
+import { appendFileSync, statSync, renameSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { loadConfig, getConfig, getEffectiveBaseUrl, getEffectiveHeaders, getEffectiveModel } from './src/config.js';
 import { getProvider } from './src/providers.js';
 import { translateRequest, translateResponse } from './src/translator.js';
 import { translateStream } from './src/stream-translator.js';
 import { withRetry } from './src/retry.js';
 import * as log from './src/logger.js';
+
+// ─── File-based request logging (blitz.log) ─────────────────────────────────
+
+const __dirname_server = dirname(fileURLToPath(import.meta.url));
+const LOG_FILE = join(__dirname_server, 'blitz.log');
+const LOG_FILE_OLD = join(__dirname_server, 'blitz.log.old');
+const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
+
+function rotateLogIfNeeded() {
+  try {
+    const stats = statSync(LOG_FILE);
+    if (stats.size >= MAX_LOG_SIZE) {
+      renameSync(LOG_FILE, LOG_FILE_OLD);
+    }
+  } catch {
+    // File doesn't exist yet — that's fine
+  }
+}
+
+function logTimestamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function appendLog(line) {
+  rotateLogIfNeeded();
+  try {
+    appendFileSync(LOG_FILE, line + '\n', 'utf-8');
+  } catch {
+    // Best-effort logging — don't crash the server
+  }
+}
 
 // Load config
 const config = loadConfig();
@@ -53,7 +89,7 @@ const proxyServer = createServer(async (req, res) => {
 
     // Anthropic Messages API endpoint
     if (path === '/v1/messages' && req.method === 'POST') {
-      await handleMessages(req, res);
+      await handleMessages(req, res, path);
       return;
     }
 
@@ -87,13 +123,16 @@ const proxyServer = createServer(async (req, res) => {
 
 // ─── Messages Handler ────────────────────────────────────────────────────────
 
-async function handleMessages(req, res) {
+async function handleMessages(req, res, path) {
+  const reqStart = Date.now();
   const body = await readBody(req);
   let anthropicReq;
 
   try {
     anthropicReq = JSON.parse(body);
   } catch {
+    const dur = Date.now() - reqStart;
+    appendLog(`[${logTimestamp()}] ERROR 400 invalid_request_error`);
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       type: 'error',
@@ -131,6 +170,9 @@ async function handleMessages(req, res) {
 
     if (!response.ok) {
       const errorText = await response.text();
+      const dur = Date.now() - reqStart;
+      const errType = response.status === 429 ? 'rate_limit_exceeded' : 'api_error';
+      appendLog(`[${logTimestamp()}] ERROR ${response.status} ${errType}`);
       log.error(`[Proxy] Provider returned ${response.status}:`, errorText.slice(0, 500));
 
       const status = response.status === 429 ? 429 : response.status >= 500 ? 529 : 400;
@@ -154,16 +196,22 @@ async function handleMessages(req, res) {
       });
 
       await translateStream(response.body, res, toolIdMap, anthropicReq.model || model);
+      const dur = Date.now() - reqStart;
+      appendLog(`[${logTimestamp()}] POST ${path} → 200 OK (${dur}ms) ${model} [stream]`);
     } else {
       const openaiRes = await response.json();
       const anthropicRes = translateResponse(openaiRes, toolIdMap, anthropicReq.model || model);
 
+      const dur = Date.now() - reqStart;
+      appendLog(`[${logTimestamp()}] POST ${path} → 200 OK (${dur}ms) ${model}`);
       log.proxy('out', `stop=${anthropicRes.stop_reason} blocks=${anthropicRes.content.length} tokens=${anthropicRes.usage.output_tokens}`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(anthropicRes));
     }
   } catch (err) {
+    const dur = Date.now() - reqStart;
+    appendLog(`[${logTimestamp()}] ERROR 502 ${err.message.slice(0, 80)}`);
     log.error('[Proxy] Fetch error:', err.message);
 
     if (!res.headersSent) {

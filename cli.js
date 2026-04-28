@@ -7,6 +7,9 @@
 
 import { loadConfig, getConfig, saveConfig, addApiKey, removeApiKey, setActiveKey, getApiKeys } from './src/config.js';
 import { getProvider, PROVIDERS, detectOllamaModels } from './src/providers.js';
+import { readFileSync, writeFileSync, watchFile, statSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 const C = {
   r: '\x1b[0m', b: '\x1b[1m', d: '\x1b[2m',
@@ -38,6 +41,8 @@ switch (cmd) {
   case 'providers': cmdProvider(args); break;
   case 'test':      cmdTest(); break;
   case 'status':    cmdStatus(); break;
+  case 'logs':
+  case 'log':       cmdLogs(args); break;
   case 'help':
   case '--help':
   case '-h':        cmdHelp(); break;
@@ -369,6 +374,99 @@ function cmdStatus() {
   console.log(`  Keys:      ${keys.length} saved\n`);
 }
 
+// ─── Logs ────────────────────────────────────────────────────────────────────
+
+const __dirname_cli = dirname(fileURLToPath(import.meta.url));
+const LOG_PATH = join(__dirname_cli, 'blitz.log');
+
+function colorLogLine(line) {
+  if (!line.trim()) return '';
+  // Error lines
+  if (line.includes('ERROR')) {
+    const code = line.match(/ERROR\s+(\d+)/);
+    if (code) {
+      const status = parseInt(code[1], 10);
+      if (status >= 500) return `${C.red}${line}${C.r}`;
+      if (status >= 400) return `${C.yel}${line}${C.r}`;
+    }
+    return `${C.red}${line}${C.r}`;
+  }
+  // Success lines with status
+  if (line.includes('→ 200')) return `${C.grn}${line}${C.r}`;
+  // Other 4xx/5xx in the line
+  const statusMatch = line.match(/→\s*(\d+)/);
+  if (statusMatch) {
+    const status = parseInt(statusMatch[1], 10);
+    if (status >= 500) return `${C.red}${line}${C.r}`;
+    if (status >= 400) return `${C.yel}${line}${C.r}`;
+  }
+  return line;
+}
+
+function cmdLogs(args) {
+  const flag = args[0];
+
+  // blitz logs --clear
+  if (flag === '--clear') {
+    try {
+      writeFileSync(LOG_PATH, '', 'utf-8');
+      console.log(`${C.grn}✓ Log file cleared${C.r}`);
+    } catch {
+      console.log(`${C.yel}No log file to clear${C.r}`);
+    }
+    return;
+  }
+
+  // blitz logs --live
+  if (flag === '--live') {
+    console.log(`${C.d}Watching ${LOG_PATH}... (Ctrl+C to stop)${C.r}\n`);
+    let lastSize = 0;
+    try {
+      lastSize = statSync(LOG_PATH).size;
+    } catch {
+      // File doesn't exist yet
+    }
+
+    watchFile(LOG_PATH, { interval: 500 }, (curr) => {
+      if (curr.size > lastSize) {
+        try {
+          const fd = readFileSync(LOG_PATH, 'utf-8');
+          const allBytes = Buffer.from(fd, 'utf-8');
+          const newContent = allBytes.slice(lastSize).toString('utf-8');
+          const lines = newContent.split('\n').filter(l => l.trim());
+          for (const line of lines) {
+            console.log(colorLogLine(line));
+          }
+        } catch { /* ignore */ }
+        lastSize = curr.size;
+      }
+    });
+    return;
+  }
+
+  // blitz logs (default: last 50 lines)
+  let content = '';
+  try {
+    content = readFileSync(LOG_PATH, 'utf-8');
+  } catch {
+    console.log(`${C.yel}No log file found. Start the proxy to generate logs.${C.r}`);
+    return;
+  }
+
+  const lines = content.split('\n').filter(l => l.trim());
+  if (lines.length === 0) {
+    console.log(`${C.d}Log file is empty.${C.r}`);
+    return;
+  }
+
+  const last50 = lines.slice(-50);
+  console.log(`${C.d}── Last ${last50.length} log entries ──${C.r}\n`);
+  for (const line of last50) {
+    console.log(colorLogLine(line));
+  }
+  console.log(`\n${C.d}Total entries: ${lines.length} │ blitz logs --live │ blitz logs --clear${C.r}`);
+}
+
 // ─── Help ────────────────────────────────────────────────────────────────────
 
 function cmdHelp() {
@@ -392,6 +490,11 @@ ${C.b}CONFIG:${C.r}
   blitz test             Test connection to provider
   blitz status           Show current config
 
+${C.b}LOGS:${C.r}
+  blitz logs             Show last 50 log entries
+  blitz logs --live      Stream new log entries in real-time
+  blitz logs --clear     Clear the log file
+
 ${C.b}EXAMPLES:${C.r}
   ${C.d}blitz add nvapi-abc123 "My NVIDIA"${C.r}
   ${C.d}blitz switch 2${C.r}
@@ -399,5 +502,6 @@ ${C.b}EXAMPLES:${C.r}
   ${C.d}blitz model deepseek-r1${C.r}
   ${C.d}blitz provider groq${C.r}
   ${C.d}blitz rm 1${C.r}
+  ${C.d}blitz logs --live${C.r}
   `);
 }

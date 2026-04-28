@@ -2,6 +2,13 @@
 .env
 config.json
 
+# Logs
+blitz.log
+blitz.log.old
+
+# Test
+test.js
+
 # Node
 node_modules/
 

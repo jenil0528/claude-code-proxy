@@ -1,3 +1,5 @@
+![version](https://img.shields.io/badge/version-1.0.0-blue) ![node](https://img.shields.io/badge/node-18%2B-green) ![zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Mac%20%7C%20Linux-lightgrey)
+
 # ⚡ BlitzProxy
 
 **Use Claude Code with ANY LLM provider — DeepSeek, NVIDIA, Groq, Ollama, and more.**
@@ -56,6 +58,24 @@ This does two things:
 3. Adds `blitz` command to your PATH so you can run it from anywhere
 
 > **After setup, close and reopen your terminal** for the changes to take effect.
+
+### 🍎 Mac / Linux Quick Start
+
+```bash
+# One-time setup
+bash setup.sh
+
+# Add your API key
+blitz add YOUR_API_KEY_HERE
+
+# Start
+blitz
+```
+
+`setup.sh` will:
+1. Append `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` to your `~/.zshrc` or `~/.bashrc`
+2. Create a `blitz` symlink at `/usr/local/bin/blitz`
+3. Print instructions to source your shell config
 
 ### Step 3: Add Your API Key
 
@@ -204,6 +224,22 @@ blitz test                # Test connection to current provider
 blitz status              # Show current configuration
 ```
 
+### Logs
+
+```powershell
+blitz logs             # Show last 50 entries with colored output
+blitz logs --live      # Stream new entries in real-time (like tail -f)
+blitz logs --clear     # Wipe the log file
+```
+
+Log format:
+```
+[2026-04-28 14:32:01] POST /v1/messages → 200 OK (1243ms) deepseek-v4-pro
+[2026-04-28 14:32:01] ERROR 429 rate_limit_exceeded
+```
+
+Colors: 🟢 green = 200 OK, 🟡 yellow = 4xx, 🔴 red = 5xx/errors. Log auto-rotates to `blitz.log.old` at 5MB.
+
 ---
 
 ## ⏱️ Auto-Timeout
@@ -231,12 +267,15 @@ When you switch keys or providers, the timeout updates automatically.
 
 ```
 claude proxy/
-├── blitz.bat          # Entry point — run "blitz" from anywhere
-├── cli.js             # CLI tool (add/keys/switch/rm/model/provider/test)
+├── blitz.bat          # Entry point — run "blitz" from anywhere (Windows)
+├── blitz.sh           # Entry point — run "blitz" from anywhere (Mac/Linux)
+├── cli.js             # CLI tool (add/keys/switch/rm/model/provider/test/logs)
 ├── server.js          # Proxy server (translates Anthropic → OpenAI)
-├── setup.bat          # One-time setup (sets env vars + PATH)
+├── setup.bat          # One-time setup (Windows)
+├── setup.sh           # One-time setup (Mac/Linux)
 ├── start.bat          # Alternative: start proxy only (without Claude)
 ├── config.json        # Auto-created — stores your keys & settings
+├── blitz.log          # Request log (auto-created, auto-rotated at 5MB)
 ├── .env               # API key (auto-created from .env.example)
 ├── .env.example       # Template
 └── src/
@@ -262,8 +301,8 @@ BlitzProxy auto-detects the provider from your API key prefix:
 | Cerebras | `csk-` | ✅ Yes |
 | GitHub Models | `github_pat_` | ✅ Yes |
 | Hugging Face | `hf_` | ✅ Yes |
-| DeepSeek | `sk-` | ⚡ Prompts (shared with OpenAI) |
-| OpenAI | `sk-` | ⚡ Prompts (shared with DeepSeek) |
+| DeepSeek | `sk-` | ⚠️ Also matches OpenAI — blitz will ask you to confirm |
+| OpenAI | `sk-` | ⚠️ Also matches DeepSeek — blitz will ask you to confirm |
 | Together AI | *(generic)* | Set manually: `blitz provider together` |
 | Ollama | *(no key)* | Set manually: `blitz provider ollama` |
 | Custom | *(any)* | Set manually: `blitz provider custom` |
