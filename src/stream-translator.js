@@ -1,10 +1,14 @@
 // ============================================================================
 // BlitzProxy — Streaming SSE Translator
 // Converts OpenAI streaming chunks → Anthropic SSE event sequence
+// Optimized for low-latency proxying with minimal allocations
 // ============================================================================
 
 import * as log from './logger.js';
 import { randomUUID } from 'crypto';
+
+// Shared decoder — avoid creating a new one per stream
+const sharedDecoder = new TextDecoder();
 
 /**
  * Process an OpenAI streaming response and write Anthropic-formatted SSE events.
@@ -39,18 +43,19 @@ export async function translateStream(openaiStream, res, toolIdMap, requestModel
 
     if (reader) {
       // Web Streams API (fetch response.body)
-      const decoder = new TextDecoder();
       let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line
+        buffer += sharedDecoder.decode(value, { stream: true });
 
-        for (const line of lines) {
+        // Fast path: process all complete lines in batch
+        let newlineIdx;
+        while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newlineIdx);
+          buffer = buffer.slice(newlineIdx + 1);
           processSSELine(line, res, state, toolIdMap, requestModel);
         }
       }
@@ -61,16 +66,16 @@ export async function translateStream(openaiStream, res, toolIdMap, requestModel
       }
     } else {
       // Node.js Readable stream fallback
-      const decoder = new TextDecoder();
       let buffer = '';
 
       for await (const chunk of openaiStream) {
-        const text = typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+        const text = typeof chunk === 'string' ? chunk : sharedDecoder.decode(chunk, { stream: true });
         buffer += text;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
 
-        for (const line of lines) {
+        let newlineIdx;
+        while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newlineIdx);
+          buffer = buffer.slice(newlineIdx + 1);
           processSSELine(line, res, state, toolIdMap, requestModel);
         }
       }
@@ -90,16 +95,15 @@ export async function translateStream(openaiStream, res, toolIdMap, requestModel
 // ─── SSE Line Processing ─────────────────────────────────────────────────────
 
 function processSSELine(line, res, state, toolIdMap, requestModel) {
-  const trimmed = line.trim();
+  // Fast reject — avoid .trim() allocation on empty lines
+  if (line.length === 0 || line === '\r') return;
 
-  if (!trimmed || trimmed.startsWith(':')) return; // Empty line or comment
+  const trimmed = line.charAt(0) === ' ' ? line.trim() : line;
+  if (!trimmed || trimmed.charCodeAt(0) === 58) return; // 58 = ':'
 
-  if (trimmed === 'data: [DONE]') {
-    // OpenAI signals stream end
-    return;
-  }
-
-  if (!trimmed.startsWith('data: ')) return;
+  // Fast check for data: prefix (avoid startsWith overhead in hot path)
+  if (trimmed.length < 7 || trimmed.charCodeAt(0) !== 100 || trimmed.charCodeAt(5) !== 32) return; // 'd' and ' '
+  if (trimmed === 'data: [DONE]') return;
 
   const jsonStr = trimmed.slice(6); // Remove 'data: '
   let chunk;
@@ -107,7 +111,8 @@ function processSSELine(line, res, state, toolIdMap, requestModel) {
   try {
     chunk = JSON.parse(jsonStr);
   } catch {
-    log.debug('[Stream] Skipping unparseable chunk:', jsonStr.slice(0, 200));
+    // Only log in debug mode to avoid overhead
+    if (log.isDebug()) log.debug('[Stream] Skipping unparseable chunk:', jsonStr.slice(0, 200));
     return;
   }
 

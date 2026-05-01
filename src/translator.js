@@ -58,7 +58,10 @@ export function translateRequest(anthropicReq, model) {
     openaiBody.stream_options = { include_usage: true };
   }
 
-  log.debug('[Translator] Translated request:', JSON.stringify(openaiBody).slice(0, 500));
+  // Lazy debug: avoid JSON.stringify cost when not in debug mode
+  if (log.isDebug()) {
+    log.debug('[Translator] Translated request:', JSON.stringify(openaiBody).slice(0, 500));
+  }
 
   return { body: openaiBody, toolIdMap };
 }

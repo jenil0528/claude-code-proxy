@@ -1,6 +1,6 @@
 {
   "name": "blitz-proxy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Universal Claude Code proxy — works with any OpenAI-compatible API provider",
   "main": "server.js",
   "type": "module",

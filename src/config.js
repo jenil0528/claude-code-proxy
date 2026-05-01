@@ -61,7 +61,7 @@ const DEFAULT_CONFIG = {
   customHeaders: {},
   proxyPort: 4819,
   maxRetries: 3,
-  retryBaseDelay: 1000,
+  retryBaseDelay: 500,
   logRequests: true,
   logLevel: 'info',
   timeout: 120000,

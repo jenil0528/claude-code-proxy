@@ -1,23 +1,52 @@
 // ============================================================================
 // BlitzProxy — Retry Logic
 // Exponential backoff with jitter for rate-limited requests
+// Smart error classification: skip retries on permanent/unrecoverable errors
 // ============================================================================
 
 import * as log from './logger.js';
+
+// Errors that should NOT be retried (permanent failures)
+const PERMANENT_ERRORS = [
+  'ECONNREFUSED',       // Server not running — retrying won't help
+  'ERR_INVALID_URL',    // Bad URL config
+  'ENOTFOUND',          // DNS resolution failed
+  'CERT_',              // TLS cert errors
+];
+
+/**
+ * Classify whether an error is transient (worth retrying) or permanent
+ */
+function isTransientError(err) {
+  if (!err) return false;
+  const msg = (err.message || '') + (err.code || '');
+  for (const pattern of PERMANENT_ERRORS) {
+    if (msg.includes(pattern)) return false;
+  }
+  // Timeout errors are transient
+  if (err.name === 'TimeoutError' || msg.includes('timeout') || msg.includes('ETIMEDOUT')) {
+    return true;
+  }
+  // Network errors are generally transient
+  if (msg.includes('ECONNRESET') || msg.includes('EPIPE') || msg.includes('fetch failed')) {
+    return true;
+  }
+  return true; // Default: assume transient
+}
 
 /**
  * Execute an async function with exponential backoff retry
  * @param {Function} fn - Async function to execute
  * @param {Object} opts - Options
  * @param {number} opts.maxRetries - Maximum retry attempts (default: 3)
- * @param {number} opts.baseDelay - Base delay in ms (default: 1000)
+ * @param {number} opts.baseDelay - Base delay in ms (default: 500)
  * @param {number[]} opts.retryOn - HTTP status codes to retry on (default: [429, 500, 502, 503, 504])
  * @returns {Promise<Response>}
  */
 export async function withRetry(fn, opts = {}) {
   const {
     maxRetries = 3,
-    baseDelay = 1000,
+    baseDelay = 500,
     retryOn = [429, 500, 502, 503, 504],
   } = opts;
 
@@ -31,7 +60,7 @@ export async function withRetry(fn, opts = {}) {
       if (result && typeof result.status === 'number') {
         if (retryOn.includes(result.status) && attempt < maxRetries) {
           const delay = calculateDelay(attempt, baseDelay, result);
-          log.warn(`[Retry] Status ${result.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+          log.warn(`[Retry] Status ${result.status}, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})`);
           await sleep(delay);
           continue;
         }
@@ -40,9 +69,16 @@ export async function withRetry(fn, opts = {}) {
       return result;
     } catch (err) {
       lastError = err;
+
+      // Don't retry permanent errors — fail fast
+      if (!isTransientError(err)) {
+        log.error(`[Retry] Permanent error (no retry): ${err.message}`);
+        throw err;
+      }
+
       if (attempt < maxRetries) {
         const delay = calculateDelay(attempt, baseDelay);
-        log.warn(`[Retry] Error: ${err.message}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        log.warn(`[Retry] Error: ${err.message}, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})`);
         await sleep(delay);
       }
     }
@@ -62,15 +98,15 @@ function calculateDelay(attempt, baseDelay, response) {
     if (retryAfter) {
       const retryMs = parseInt(retryAfter, 10) * 1000;
       if (!isNaN(retryMs) && retryMs > 0) {
-        return Math.min(retryMs, 60000); // Cap at 60s
+        return Math.min(retryMs, 30000); // Cap at 30s
       }
     }
   }
 
-  // Exponential backoff with jitter
+  // Exponential backoff with jitter: 500ms → 1s → 2s → 4s (capped at 15s)
   const exponential = baseDelay * Math.pow(2, attempt);
-  const jitter = Math.random() * baseDelay;
-  return Math.min(exponential + jitter, 30000); // Cap at 30s
+  const jitter = Math.random() * baseDelay * 0.5;
+  return Math.min(exponential + jitter, 15000);
 }
 
 function sleep(ms) {

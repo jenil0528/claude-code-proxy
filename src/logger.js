@@ -56,6 +56,10 @@ function shouldLog(level) {
   return LEVELS[level] >= LEVELS[currentLevel];
 }
 
+export function isDebug() {
+  return currentLevel === 'debug';
+}
+
 function timestamp() {
   return new Date().toLocaleTimeString('en-US', { hour12: false });
 }

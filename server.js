@@ -13,6 +13,7 @@ import { getProvider } from './src/providers.js';
 import { translateRequest, translateResponse } from './src/translator.js';
 import { translateStream } from './src/stream-translator.js';
 import { withRetry } from './src/retry.js';
+import { fetchWithPool, destroyAgents } from './src/connection.js';
 import * as log from './src/logger.js';
 
 // ─── File-based request logging (blitz.log) ─────────────────────────────────
@@ -22,7 +23,15 @@ const LOG_FILE = join(__dirname_server, 'blitz.log');
 const LOG_FILE_OLD = join(__dirname_server, 'blitz.log.old');
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
 
+// Throttled log rotation — check at most once every 60s instead of every write
+let lastRotateCheck = 0;
+const ROTATE_CHECK_INTERVAL = 60000;
+
 function rotateLogIfNeeded() {
+  const now = Date.now();
+  if (now - lastRotateCheck < ROTATE_CHECK_INTERVAL) return;
+  lastRotateCheck = now;
+
   try {
     const stats = statSync(LOG_FILE);
     if (stats.size >= MAX_LOG_SIZE) {
@@ -52,6 +61,32 @@ function appendLog(line) {
 const config = loadConfig();
 log.setLogLevel(config.logLevel);
 
+// ─── Pre-compute immutable request context ──────────────────────────────────
+// Cache values that don't change between requests to avoid repeated lookups
+
+let cachedHeaders = null;
+let cachedBaseUrl = null;
+let cachedModel = null;
+let cachedTimeout = null;
+let cachedMaxRetries = null;
+let cachedRetryBaseDelay = null;
+
+function refreshRequestContext() {
+  const cfg = getConfig();
+  cachedHeaders = getEffectiveHeaders();
+  cachedBaseUrl = getEffectiveBaseUrl();
+  cachedModel = getEffectiveModel();
+  cachedTimeout = cfg.timeout;
+  cachedMaxRetries = cfg.maxRetries;
+  cachedRetryBaseDelay = cfg.retryBaseDelay;
+}
+
+// Initial cache fill
+refreshRequestContext();
+
+// Refresh cache periodically (picks up config changes from CLI)
+setInterval(refreshRequestContext, 5000);
+
 // ─── Proxy Server (Anthropic API) ────────────────────────────────────────────
 
 const proxyServer = createServer(async (req, res) => {
@@ -66,8 +101,8 @@ const proxyServer = createServer(async (req, res) => {
     return;
   }
 
-  const url = new URL(req.url, `http://localhost:${config.proxyPort}`);
-  const path = url.pathname;
+  // Fast path extraction — avoid URL constructor overhead for known routes
+  const path = req.url.split('?')[0];
 
   try {
     // Health check
@@ -78,10 +113,10 @@ const proxyServer = createServer(async (req, res) => {
       res.end(JSON.stringify({
         status: 'ok',
         proxy: 'BlitzProxy',
-        version: '1.0.0',
+        version: '1.1.0',
         provider: provider.name,
-        model: getEffectiveModel(),
-        baseUrl: getEffectiveBaseUrl(),
+        model: cachedModel,
+        baseUrl: cachedBaseUrl,
         timeout: cfg.timeout,
       }));
       return;
@@ -95,7 +130,7 @@ const proxyServer = createServer(async (req, res) => {
 
     // Claude Code also hits this endpoint to check models
     if (path === '/v1/models' && req.method === 'GET') {
-      await handleModels(req, res);
+      handleModels(req, res);
       return;
     }
 
@@ -114,12 +149,22 @@ const proxyServer = createServer(async (req, res) => {
     if (!res.headersSent) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
     }
-    res.end(JSON.stringify({
-      type: 'error',
-      error: { type: 'server_error', message: err.message },
-    }));
+    try {
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: 'server_error', message: err.message },
+      }));
+    } catch {
+      // Response may already be destroyed
+      res.end();
+    }
   }
 });
+
+// Increase server connection limits
+proxyServer.maxConnections = 100;
+proxyServer.keepAliveTimeout = 65000;
+proxyServer.headersTimeout = 66000;
 
 // ─── Messages Handler ────────────────────────────────────────────────────────
 
@@ -131,7 +176,6 @@ async function handleMessages(req, res, path) {
   try {
     anthropicReq = JSON.parse(body);
   } catch {
-    const dur = Date.now() - reqStart;
     appendLog(`[${logTimestamp()}] ERROR 400 invalid_request_error`);
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -141,36 +185,38 @@ async function handleMessages(req, res, path) {
     return;
   }
 
-  const model = getEffectiveModel();
-  const baseUrl = getEffectiveBaseUrl();
   const isStream = anthropicReq.stream === true;
 
   log.proxy('in', `model=${anthropicReq.model || 'default'} stream=${isStream} msgs=${anthropicReq.messages?.length || 0} tools=${anthropicReq.tools?.length || 0}`);
 
-  const { body: openaiBody, toolIdMap } = translateRequest(anthropicReq, model);
+  const { body: openaiBody, toolIdMap } = translateRequest(anthropicReq, cachedModel);
 
-  log.debug('[Proxy] Forwarding to:', `${baseUrl}/chat/completions`);
+  const fetchUrl = `${cachedBaseUrl}/chat/completions`;
 
-  const headers = getEffectiveHeaders();
-  const fetchUrl = `${baseUrl}/chat/completions`;
+  // Determine timeouts: short connect timeout, long read timeout for streaming
+  const connectTimeout = 15000; // 15s to establish connection
+  const readTimeout = isStream ? cachedTimeout : Math.min(cachedTimeout, 120000);
+
+  log.debug('[Proxy] Forwarding to:', fetchUrl);
 
   try {
     const response = await withRetry(
-      () => fetch(fetchUrl, {
+      () => fetchWithPool(fetchUrl, {
         method: 'POST',
-        headers,
+        headers: cachedHeaders,
         body: JSON.stringify(openaiBody),
-        signal: AbortSignal.timeout(getConfig().timeout),
+      }, {
+        connect: connectTimeout,
+        read: readTimeout,
       }),
       {
-        maxRetries: getConfig().maxRetries,
-        baseDelay: getConfig().retryBaseDelay,
+        maxRetries: cachedMaxRetries,
+        baseDelay: cachedRetryBaseDelay,
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      const dur = Date.now() - reqStart;
       const errType = response.status === 429 ? 'rate_limit_exceeded' : 'api_error';
       appendLog(`[${logTimestamp()}] ERROR ${response.status} ${errType}`);
       log.error(`[Proxy] Provider returned ${response.status}:`, errorText.slice(0, 500));
@@ -195,15 +241,15 @@ async function handleMessages(req, res, path) {
         'X-Accel-Buffering': 'no',
       });
 
-      await translateStream(response.body, res, toolIdMap, anthropicReq.model || model);
+      await translateStream(response.body, res, toolIdMap, anthropicReq.model || cachedModel);
       const dur = Date.now() - reqStart;
-      appendLog(`[${logTimestamp()}] POST ${path} → 200 OK (${dur}ms) ${model} [stream]`);
+      appendLog(`[${logTimestamp()}] POST ${path} → 200 OK (${dur}ms) ${cachedModel} [stream]`);
     } else {
       const openaiRes = await response.json();
-      const anthropicRes = translateResponse(openaiRes, toolIdMap, anthropicReq.model || model);
+      const anthropicRes = translateResponse(openaiRes, toolIdMap, anthropicReq.model || cachedModel);
 
       const dur = Date.now() - reqStart;
-      appendLog(`[${logTimestamp()}] POST ${path} → 200 OK (${dur}ms) ${model}`);
+      appendLog(`[${logTimestamp()}] POST ${path} → 200 OK (${dur}ms) ${cachedModel}`);
       log.proxy('out', `stop=${anthropicRes.stop_reason} blocks=${anthropicRes.content.length} tokens=${anthropicRes.usage.output_tokens}`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -211,34 +257,51 @@ async function handleMessages(req, res, path) {
     }
   } catch (err) {
     const dur = Date.now() - reqStart;
-    appendLog(`[${logTimestamp()}] ERROR 502 ${err.message.slice(0, 80)}`);
-    log.error('[Proxy] Fetch error:', err.message);
+    appendLog(`[${logTimestamp()}] ERROR 502 ${err.message.slice(0, 80)} (${dur}ms)`);
+    log.error(`[Proxy] Fetch error (${dur}ms):`, err.message);
+
+    // Provide actionable error messages
+    let userMessage = `Failed to reach provider: ${err.message}`;
+    if (err.message.includes('ECONNREFUSED')) {
+      userMessage = `Provider unreachable (connection refused). Is the server running at ${cachedBaseUrl}?`;
+    } else if (err.message.includes('ENOTFOUND')) {
+      userMessage = `DNS resolution failed for provider URL. Check your network and CUSTOM_BASE_URL.`;
+    } else if (err.message.includes('timeout')) {
+      userMessage = `Request timed out after ${dur}ms. The provider may be overloaded.`;
+    }
 
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
     }
-    res.end(JSON.stringify({
-      type: 'error',
-      error: {
-        type: 'api_error',
-        message: `Failed to reach provider: ${err.message}`,
-      },
-    }));
+    try {
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: userMessage,
+        },
+      }));
+    } catch {
+      res.end();
+    }
   }
 }
 
 // ─── Models Handler ──────────────────────────────────────────────────────────
 
-async function handleModels(req, res) {
+// Pre-serialized response — this never changes, no need to rebuild each time
+const MODELS_RESPONSE = JSON.stringify({
+  data: [
+    { id: 'claude-sonnet-4-20250514', object: 'model' },
+    { id: 'claude-3-5-sonnet-20241022', object: 'model' },
+    { id: 'claude-3-haiku-20240307', object: 'model' },
+    { id: 'claude-3-opus-20240229', object: 'model' },
+  ],
+});
+
+function handleModels(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    data: [
-      { id: 'claude-sonnet-4-20250514', object: 'model' },
-      { id: 'claude-3-5-sonnet-20241022', object: 'model' },
-      { id: 'claude-3-haiku-20240307', object: 'model' },
-      { id: 'claude-3-opus-20240229', object: 'model' },
-    ],
-  }));
+  res.end(MODELS_RESPONSE);
 }
 
 // ─── Token Count Handler ─────────────────────────────────────────────────────
@@ -252,10 +315,11 @@ async function handleCountTokens(req, res) {
     reqBody = {};
   }
 
-  const messagesStr = JSON.stringify(reqBody.messages || []);
-  const systemStr = JSON.stringify(reqBody.system || '');
-  const toolsStr = JSON.stringify(reqBody.tools || []);
-  const totalChars = messagesStr.length + systemStr.length + toolsStr.length;
+  // Fast estimation — avoid full JSON.stringify just to count chars
+  const msgLen = reqBody.messages ? JSON.stringify(reqBody.messages).length : 0;
+  const sysLen = reqBody.system ? (typeof reqBody.system === 'string' ? reqBody.system.length : JSON.stringify(reqBody.system).length) : 0;
+  const toolLen = reqBody.tools ? JSON.stringify(reqBody.tools).length : 0;
+  const totalChars = msgLen + sysLen + toolLen;
   const estimatedTokens = Math.ceil(totalChars / 4);
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -266,11 +330,27 @@ async function handleCountTokens(req, res) {
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
+/**
+ * Read request body using buffer array (avoids O(n²) string concatenation)
+ */
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => resolve(body));
+    const chunks = [];
+    let totalLen = 0;
+    req.on('data', chunk => {
+      chunks.push(chunk);
+      totalLen += chunk.length;
+    });
+    req.on('end', () => {
+      // Single Buffer.concat + toString is much faster than string +=
+      if (chunks.length === 1) {
+        resolve(chunks[0].toString('utf-8'));
+      } else if (chunks.length === 0) {
+        resolve('');
+      } else {
+        resolve(Buffer.concat(chunks, totalLen).toString('utf-8'));
+      }
+    });
     req.on('error', reject);
   });
 }
@@ -282,7 +362,7 @@ proxyServer.listen(config.proxyPort, () => {
   const detectLabel = config.autoDetected ? ' (auto-detected ✨)' : '';
 
   log.banner([
-    `${'\x1b[1m'}⚡ BlitzProxy v1.0.0${'\x1b[0m'}  —  Universal Claude Code Proxy`,
+    `${'\x1b[1m'}⚡ BlitzProxy v1.1.0${'\x1b[0m'}  —  Universal Claude Code Proxy`,
     '',
     `  Proxy:     ${'\x1b[33m'}http://localhost:${config.proxyPort}${'\x1b[0m'}`,
     `  Provider:  ${'\x1b[32m'}${provider.name}${detectLabel}${'\x1b[0m'}`,
@@ -290,6 +370,7 @@ proxyServer.listen(config.proxyPort, () => {
     `  Timeout:   ${'\x1b[33m'}${config.timeout / 1000}s${'\x1b[0m'}`,
     `  Base URL:  ${'\x1b[36m'}${getEffectiveBaseUrl()}${'\x1b[0m'}`,
     '',
+    `  ${'\x1b[2m'}Keep-alive: enabled  •  Connection pooling: enabled${'\x1b[0m'}`,
     `  ${'\x1b[2m'}Manage keys: blitz keys | blitz add <key> | blitz switch <n>${'\x1b[0m'}`,
   ]);
 });
@@ -297,11 +378,13 @@ proxyServer.listen(config.proxyPort, () => {
 // Graceful shutdown
 process.on('SIGINT', () => {
   log.info('Shutting down...');
+  destroyAgents();
   proxyServer.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
+  destroyAgents();
   proxyServer.close();
   process.exit(0);
 });
