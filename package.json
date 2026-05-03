@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node test.js"
+    "test": "node test/index.js"
   },
   "keywords": ["claude", "proxy", "openai", "nvidia", "groq", "ollama", "huggingface"],
   "author": "Jenil <jenil8736@gmail.com>",

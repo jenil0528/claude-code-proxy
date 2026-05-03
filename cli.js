@@ -428,6 +428,10 @@ function cmdLogs(args) {
     }
 
     watchFile(LOG_PATH, { interval: 500 }, (curr) => {
+      if (curr.size < lastSize) {
+        // Log file was rotated — reset so we start reading from the beginning of the new file
+        lastSize = 0;
+      }
       if (curr.size > lastSize) {
         try {
           const fd = readFileSync(LOG_PATH, 'utf-8');
