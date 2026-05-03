@@ -60,6 +60,8 @@ export async function withRetry(fn, opts = {}) {
       if (result && typeof result.status === 'number') {
         if (retryOn.includes(result.status) && attempt < maxRetries) {
           const delay = calculateDelay(attempt, baseDelay, result);
+          // Drain the response body before retrying so the connection can be reused
+          try { await result.text(); } catch { /* ignore drain errors */ }
           log.warn(`[Retry] Status ${result.status}, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})`);
           await sleep(delay);
           continue;

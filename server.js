@@ -170,7 +170,20 @@ proxyServer.headersTimeout = 66000;
 
 async function handleMessages(req, res, path) {
   const reqStart = Date.now();
-  const body = await readBody(req);
+  let body;
+  try {
+    body = await readBody(req);
+  } catch (err) {
+    if (err.code === 'BODY_TOO_LARGE') {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: 'invalid_request_error', message: 'Request body too large (limit: 10 MB)' },
+      }));
+      return;
+    }
+    throw err;
+  }
   let anthropicReq;
 
   try {
@@ -331,15 +344,20 @@ async function handleCountTokens(req, res) {
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 /**
- * Read request body using buffer array (avoids O(n²) string concatenation)
+ * Read request body using buffer array (avoids O(n²) string concatenation).
+ * Rejects with an error if the body exceeds maxBytes (default 10 MB).
  */
-function readBody(req) {
+function readBody(req, maxBytes = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let totalLen = 0;
     req.on('data', chunk => {
-      chunks.push(chunk);
       totalLen += chunk.length;
+      if (totalLen > maxBytes) {
+        req.destroy();
+        return reject(Object.assign(new Error('Request body too large'), { code: 'BODY_TOO_LARGE' }));
+      }
+      chunks.push(chunk);
     });
     req.on('end', () => {
       // Single Buffer.concat + toString is much faster than string +=

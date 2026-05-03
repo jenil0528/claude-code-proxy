@@ -1,41 +1,14 @@
 // ============================================================================
 // BlitzProxy — Connection Manager
-// HTTP Agent pooling, keep-alive, and optimized fetch wrapper
+// HTTP timeout management and optimised fetch wrapper
+//
+// Node.js 18+ uses undici for the built-in `fetch()`.  Undici manages its own
+// connection pool internally — the old `http.Agent` / `https.Agent` style of
+// pooling does NOT apply to `fetch()`.  Connection keep-alive and socket reuse
+// are handled automatically by undici without any extra configuration.
 // ============================================================================
 
-import { Agent } from 'http';
-import { Agent as HttpsAgent } from 'https';
 import * as log from './logger.js';
-
-// ─── Keep-Alive Agents ──────────────────────────────────────────────────────
-// Reuse TCP connections instead of opening a new one per request.
-// This dramatically reduces latency for sequential API calls.
-
-const httpAgent = new Agent({
-  keepAlive: true,
-  keepAliveMsecs: 30000,
-  maxSockets: 10,
-  maxFreeSockets: 5,
-  timeout: 60000,
-});
-
-const httpsAgent = new HttpsAgent({
-  keepAlive: true,
-  keepAliveMsecs: 30000,
-  maxSockets: 10,
-  maxFreeSockets: 5,
-  timeout: 60000,
-});
-
-/**
- * Get the appropriate agent for a URL
- */
-export function getAgent(url) {
-  if (typeof url === 'string') {
-    return url.startsWith('https') ? httpsAgent : httpAgent;
-  }
-  return httpsAgent;
-}
 
 /**
  * Optimized fetch with connection reuse and separate connect/read timeouts.
@@ -88,9 +61,10 @@ export async function fetchWithPool(url, options = {}, timeouts = {}) {
 }
 
 /**
- * Cleanup on process exit
+ * Cleanup on process exit.
+ * Connection clean-up is handled automatically by undici; this is a no-op
+ * kept for backward compatibility with any external callers.
  */
 export function destroyAgents() {
-  httpAgent.destroy();
-  httpsAgent.destroy();
+  // No-op: undici (Node.js built-in fetch) manages its own pool lifecycle.
 }

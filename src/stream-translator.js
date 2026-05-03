@@ -21,10 +21,10 @@ const sharedDecoder = new TextDecoder();
 export async function translateStream(openaiStream, res, toolIdMap, requestModel) {
   const state = {
     messageId: 'msg_' + randomUUID().replace(/-/g, '').slice(0, 24),
-    contentBlocks: [],    // Track content blocks we've started
     currentBlockIndex: -1,
     currentBlockType: null,
-    toolCallBuffers: {},  // index -> { id, name, arguments }
+    closedBlocks: new Set(),  // block indices that have already received content_block_stop
+    toolCallBuffers: {},      // tcIndex -> { blockIndex, anthropicId, openaiId, name, arguments }
     textBuffer: '',
     inputTokens: 0,
     outputTokens: 0,
@@ -172,9 +172,8 @@ function processSSELine(line, res, state, toolIdMap, requestModel) {
       const tcIndex = tc.index ?? 0;
 
       if (!state.toolCallBuffers[tcIndex]) {
-        // New tool call starting
-        // Close any open text block first
-        if (state.currentBlockType === 'text') {
+        // New tool call starting — close whatever block is currently open (text or tool_use)
+        if (state.currentBlockType !== null) {
           closeCurrentBlock(res, state);
         }
 
@@ -208,6 +207,15 @@ function processSSELine(line, res, state, toolIdMap, requestModel) {
             input: {},
           },
         });
+
+        // Some providers include arguments in the very first chunk — send them immediately
+        if (tc.function?.arguments) {
+          sendEvent(res, 'content_block_delta', {
+            type: 'content_block_delta',
+            index: state.currentBlockIndex,
+            delta: { type: 'input_json_delta', partial_json: tc.function.arguments },
+          });
+        }
       } else {
         // Continuation of existing tool call
         const buf = state.toolCallBuffers[tcIndex];
@@ -232,28 +240,40 @@ function processSSELine(line, res, state, toolIdMap, requestModel) {
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
-function closeCurrentBlock(res, state) {
-  if (state.currentBlockIndex >= 0 && state.currentBlockType) {
+/**
+ * Send a content_block_stop for the given block index, at most once.
+ */
+function closeBlock(res, state, blockIndex) {
+  if (blockIndex >= 0 && !state.closedBlocks.has(blockIndex)) {
     sendEvent(res, 'content_block_stop', {
       type: 'content_block_stop',
-      index: state.currentBlockIndex,
+      index: blockIndex,
     });
+    state.closedBlocks.add(blockIndex);
+  }
+}
+
+/**
+ * Close the currently active content block (text or tool_use) and reset tracking.
+ */
+function closeCurrentBlock(res, state) {
+  if (state.currentBlockIndex >= 0 && state.currentBlockType !== null) {
+    closeBlock(res, state, state.currentBlockIndex);
+    state.currentBlockType = null;
   }
 }
 
 function finalizeStream(res, state, requestModel) {
-  // Close any open blocks
+  // Close the currently active block (text or the last tool_use)
   closeCurrentBlock(res, state);
 
-  // Close any tool call blocks that haven't been closed
-  for (const tcIndex of Object.keys(state.toolCallBuffers)) {
-    const buf = state.toolCallBuffers[tcIndex];
-    // Tool blocks might already be closed by closeCurrentBlock if it was the last one
-    // Send a stop for each unique block index we haven't stopped
-    // (closeCurrentBlock only closes the current one)
+  // Close any remaining tool call blocks that were superseded by later blocks
+  // and therefore never received a content_block_stop
+  for (const buf of Object.values(state.toolCallBuffers)) {
+    closeBlock(res, state, buf.blockIndex);
   }
 
-  // If we had tool calls, set stop_reason
+  // If we had any tool calls, ensure stop_reason reflects that
   if (Object.keys(state.toolCallBuffers).length > 0) {
     state.stopReason = 'tool_use';
   }
