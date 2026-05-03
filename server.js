@@ -352,11 +352,12 @@ function readBody(req, maxBytes = 10 * 1024 * 1024) {
     const chunks = [];
     let totalLen = 0;
     req.on('data', chunk => {
-      totalLen += chunk.length;
-      if (totalLen > maxBytes) {
+      // Check size BEFORE buffering — prevents allocating memory for oversize chunks
+      if (totalLen + chunk.length > maxBytes) {
         req.destroy();
         return reject(Object.assign(new Error('Request body too large'), { code: 'BODY_TOO_LARGE' }));
       }
+      totalLen += chunk.length;
       chunks.push(chunk);
     });
     req.on('end', () => {

@@ -74,7 +74,7 @@ function makeStream(lines) {
     getReader() {
       return {
         read() {
-          if (i >= chunks.length) return Promise.resolve({ done: true, value: undefined });
+          if (i >= chunks.length) return Promise.resolve({ done: true });
           return Promise.resolve({ done: false, value: chunks[i++] });
         },
       };
