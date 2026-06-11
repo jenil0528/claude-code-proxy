@@ -20,18 +20,24 @@ if "%~1"=="" goto :start_proxy
 
 :: If first arg is a CLI command → route to cli.js
 set "CMD=%~1"
-if /i "%CMD%"=="add"     goto :cli
-if /i "%CMD%"=="keys"    goto :cli
-if /i "%CMD%"=="list"    goto :cli
-if /i "%CMD%"=="switch"  goto :cli
-if /i "%CMD%"=="use"     goto :cli
-if /i "%CMD%"=="rm"      goto :cli
-if /i "%CMD%"=="remove"  goto :cli
-if /i "%CMD%"=="delete"  goto :cli
-if /i "%CMD%"=="status"  goto :cli
-if /i "%CMD%"=="help"    goto :cli
-if /i "%CMD%"=="--help"  goto :cli
-if /i "%CMD%"=="-h"      goto :cli
+if /i "%CMD%"=="add"       goto :cli
+if /i "%CMD%"=="keys"      goto :cli
+if /i "%CMD%"=="list"      goto :cli
+if /i "%CMD%"=="switch"    goto :cli
+if /i "%CMD%"=="use"       goto :cli
+if /i "%CMD%"=="rm"        goto :cli
+if /i "%CMD%"=="remove"    goto :cli
+if /i "%CMD%"=="delete"    goto :cli
+if /i "%CMD%"=="model"     goto :cli
+if /i "%CMD%"=="provider"  goto :cli
+if /i "%CMD%"=="providers" goto :cli
+if /i "%CMD%"=="test"      goto :cli
+if /i "%CMD%"=="status"    goto :cli
+if /i "%CMD%"=="logs"      goto :cli
+if /i "%CMD%"=="log"       goto :cli
+if /i "%CMD%"=="help"      goto :cli
+if /i "%CMD%"=="--help"    goto :cli
+if /i "%CMD%"=="-h"        goto :cli
 
 :: Unknown command — show help
 goto :cli
@@ -62,7 +68,6 @@ timeout /t 2 /nobreak >nul
 
 :: Launch Claude Code
 echo   ⚡ Proxy running at http://localhost:4819
-echo   🖥️  Dashboard at http://localhost:4820
 echo.
 echo   Launching Claude Code...
 echo.

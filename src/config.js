@@ -181,8 +181,11 @@ export function saveConfig(updates = {}) {
       `PROVIDER=${currentConfig.autoDetected ? '' : currentConfig.provider}`,
       `MODEL=${currentConfig.model || ''}`,
       `PROXY_PORT=${currentConfig.proxyPort}`,
-      `DASHBOARD_PORT=${currentConfig.dashboardPort}`,
     ];
+    // Only write DASHBOARD_PORT if it's a valid number (avoid persisting NaN / undefined)
+    if (typeof currentConfig.dashboardPort === 'number' && !isNaN(currentConfig.dashboardPort)) {
+      envLines.push(`DASHBOARD_PORT=${currentConfig.dashboardPort}`);
+    }
     writeFileSync(ENV_PATH, envLines.join('\n') + '\n', 'utf-8');
   } catch { /* .env write is best-effort */ }
 

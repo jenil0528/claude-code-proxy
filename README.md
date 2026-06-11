@@ -1,4 +1,4 @@
-![version](https://img.shields.io/badge/version-1.0.0-blue) ![node](https://img.shields.io/badge/node-18%2B-green) ![zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Mac%20%7C%20Linux-lightgrey)
+![version](https://img.shields.io/badge/version-1.1.0-blue) ![node](https://img.shields.io/badge/node-18%2B-green) ![zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Mac%20%7C%20Linux-lightgrey) ![CI](https://github.com/jenil0528/claude-code-proxy/actions/workflows/ci.yml/badge.svg)
 
 # ⚡ BlitzProxy
 
@@ -52,7 +52,7 @@ Open a terminal in the BlitzProxy folder and run:
 .\setup.bat
 ```
 
-This does two things:
+This does three things:
 1. Sets `ANTHROPIC_BASE_URL=http://localhost:4819` permanently (tells Claude Code to use BlitzProxy)
 2. Sets `ANTHROPIC_API_KEY=blitz` permanently (a dummy key, BlitzProxy handles the real one)
 3. Adds `blitz` command to your PATH so you can run it from anywhere
@@ -266,7 +266,7 @@ When you switch keys or providers, the timeout updates automatically.
 ## 🗂️ Project Structure
 
 ```
-claude proxy/
+claude-code-proxy/
 ├── blitz.bat          # Entry point — run "blitz" from anywhere (Windows)
 ├── blitz.sh           # Entry point — run "blitz" from anywhere (Mac/Linux)
 ├── cli.js             # CLI tool (add/keys/switch/rm/model/provider/test/logs)
@@ -278,13 +278,18 @@ claude proxy/
 ├── blitz.log          # Request log (auto-created, auto-rotated at 5MB)
 ├── .env               # API key (auto-created from .env.example)
 ├── .env.example       # Template
+├── test/
+│   ├── index.js               # Test runner (npm test)
+│   ├── translator.test.js     # Unit tests: request/response translation
+│   └── stream.test.js         # Unit tests: SSE stream translation
 └── src/
-    ├── config.js      # Configuration loading & key management
-    ├── providers.js   # Provider definitions (URLs, models, timeouts)
-    ├── translator.js  # Anthropic ↔ OpenAI request/response translation
-    ├── stream-translator.js  # SSE stream translation
-    ├── retry.js       # Automatic retry with exponential backoff
-    └── logger.js      # Logging utilities
+    ├── config.js              # Configuration loading & key management
+    ├── connection.js          # Fetch wrapper with connect/read timeouts
+    ├── providers.js           # Provider definitions (URLs, models, timeouts)
+    ├── translator.js          # Anthropic ↔ OpenAI request/response translation
+    ├── stream-translator.js   # SSE stream translation
+    ├── retry.js               # Automatic retry with exponential backoff
+    └── logger.js              # Logging utilities
 ```
 
 ---
@@ -365,6 +370,23 @@ If you see this error, it's because you included brackets like `<` and `>` in yo
 - ❌ `blitz add <nvapi-abc123>`
 - ✅ `blitz add nvapi-abc123`
 - ✅ `blitz add "nvapi-abc123"` (use quotes if the key has special characters)
+
+---
+
+## 🧪 Development & Testing
+
+BlitzProxy has zero runtime dependencies. Tests are included and run with:
+
+```bash
+npm test
+```
+
+The test suite covers:
+- Request translation (Anthropic → OpenAI messages, tools, tool_choice, stop_sequences)
+- Response translation (OpenAI → Anthropic content blocks, stop reasons, usage)
+- Streaming SSE translation (text deltas, single/multi tool calls, no duplicate events)
+
+A CI workflow (`.github/workflows/ci.yml`) runs the test suite automatically on every push and pull request across Node.js 18, 20, and 22.
 
 ---
 
